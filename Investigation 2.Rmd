@@ -1,0 +1,114 @@
+---
+title: "Investigation 2"
+author: "John Viviani"
+date: "6/8/2020"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+{
+  c("conflicted",    # To deal with conflicting function names.
+                     # I've had some strangeness with this
+                     #  script. I suspect package:conflicted,
+                     #  but I don't yet know for sure.
+    "data.table",    # Fast data input/output
+    "dplyr",         # This is all of tidyverse that gets used here
+    "drat",          # Needed for a possible install below 
+    "dtplyr",        # dplyr syntax with a data.table backend
+    "igraph",        # Basic network tools; we'll use statnet mostly
+    "igraphdata",    # Some useful datasets
+    "intergraph",    # Translate between igraph and statnet formats
+    "statnet",        # A suite of network tools, including ERGM and more
+    "R.matlab"
+  ) -> package_names
+  
+  for (package_name in package_names) {
+    if (!is.element(package_name, installed.packages()[, 1])) {
+      install.packages(package_name,
+                       repos = "http://cran.mtu.edu/")
+    }
+    library(
+      package_name,
+      character.only = TRUE,
+      quietly = TRUE,
+      verbose = FALSE
+    )
+  }
+  rm(list = c("package_name", "package_names"))
+  
+  # Load one package via drat, if needed
+  if (!is.element("networkdata", installed.packages()[, 1])) {
+    addRepo("schochastics")
+    install.packages("networkdata")
+  }
+  library(
+    "networkdata",
+    character.only = TRUE,
+    quietly = TRUE,
+    verbose = FALSE
+  )
+}
+
+# Because I like these options:
+options(show.signif.stars = FALSE)
+options(digits = 4)
+```
+
+
+# Cornell
+```{r}
+# reading in the data
+cornell <- readMat("~/COLLEGE/GRAD SCHOOL/GDAT622/facebook100/Cornell5.mat")
+
+cornell_df <- graph.data.frame(cornell$local.info)
+cornell_net <- asNetwork(cornell_df)
+
+gest <- ergm(cornell_net ~ edges)
+# AIC 68.9
+summary(gest)
+
+plot(cornell_net)
+
+```
+
+Reject the null; p-value too high.
+
+
+# Duke
+```{r}
+# reading in the data
+duke <- readMat("~/COLLEGE/GRAD SCHOOL/GDAT622/facebook100/Duke14.mat")
+
+duke_df <- graph.data.frame(duke$local.info)
+duke_net <- asNetwork(duke_df)
+
+gest2 <- ergm(duke_net ~ edges)
+# AIC 67.4
+summary(gest2)
+
+plot(duke_net)
+
+```
+
+Reject the null; p-value too high.
+
+
+# Auburn
+```{r}
+# reading in the data
+auburn <- readMat("~/COLLEGE/GRAD SCHOOL/GDAT622/facebook100/Auburn71.mat")
+
+auburn_df <- graph.data.frame(auburn$local.info)
+auburn_net <- asNetwork(auburn_df)
+
+gest3 <- ergm(auburn_net ~ edges)
+# AIC 51.8
+summary(gest3)
+
+plot(auburn_net)
+
+```
+
+Reject the null; p-value too high.
