@@ -1,0 +1,191 @@
+---
+title: "Investigation 4"
+author: "John Viviani"
+date: "6/22/2020"
+output: 
+  md_document:
+    variant: gfm
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+{
+  c("conflicted",    # To deal with conflicting function names.
+                     # I've had some strangeness with this
+                     #  script. I suspect package:conflicted,
+                     #  but I don't yet know for sure.
+    "data.table",    # Fast data input/output
+    "dplyr",         # This is all of tidyverse that gets used here
+    "drat",          # Needed for a possible install below 
+    "dtplyr",        # dplyr syntax with a data.table backend
+    "igraph",        # Basic network tools; we'll use statnet mostly
+    "igraphdata",    # Some useful datasets
+    "intergraph",    # Translate between igraph and statnet formats
+    "statnet",        # A suite of network tools, including ERGM and more
+    "tidyverse"
+  ) -> package_names
+  
+  for (package_name in package_names) {
+    if (!is.element(package_name, installed.packages()[, 1])) {
+      install.packages(package_name,
+                       repos = "http://cran.mtu.edu/")
+    }
+    library(
+      package_name,
+      character.only = TRUE,
+      quietly = TRUE,
+      verbose = FALSE
+    )
+  }
+  rm(list = c("package_name", "package_names"))
+  
+  # Load one package via drat, if needed
+  if (!is.element("networkdata", installed.packages()[, 1])) {
+    addRepo("schochastics")
+    install.packages("networkdata")
+  }
+  library(
+    "networkdata",
+    character.only = TRUE,
+    quietly = TRUE,
+    verbose = FALSE
+  )
+}
+
+# Because I like these options:
+options(show.signif.stars = FALSE)
+options(digits = 4)
+
+conflict_prefer("filter", "dplyr")
+```
+
+
+# Data Cleaning
+```{r}
+# reading in the data
+load("./Emotions.RData")
+
+# converting from wide to long
+# filtering for 1 as we are interested in the emotion that was felt at the particular time of day
+emotion_long <- emotion_raw %>%
+  gather(., emotion, value, 4:21) %>% 
+  arrange(id, Day) %>% 
+  filter(value == 1) %>% 
+  select(-value)
+
+# since we need to establish edges, we will need the initial emotion (from column) and the next emotion (to column)
+emotion_E <- emotion_long %>%
+  rename(initial_emotion = emotion) %>% 
+  mutate(next_emotion = lead(initial_emotion)) %>% 
+  select(id, Day, Hours, initial_emotion, next_emotion) %>% 
+  group_by(id) %>% 
+  slice(-length(id))
+# needed to remove last row in each id so a person's next emotion doesn't overlap with another person's initial emotion
+
+# need to make the nodes  
+emotion_N <- emotion_long %>% 
+  count(emotion) %>% 
+  rowid_to_column("id")
+
+# weight need to be equal to the number of times there is a co-occurrence
+emotion_net <- emotion_E %>% 
+  group_by(initial_emotion, next_emotion) %>% 
+  summarize(weight = n()) %>% 
+  ungroup() %>% 
+  select(initial_emotion, next_emotion, weight)
+
+# creating the graph object
+emotion_g <- graph_from_data_frame(emotion_net)
+```
+
+
+# EDA
+```{r}
+# community detection (by optimizing modularity over partitions)
+clp <- cluster_optimal(emotion_g)
+class(clp)
+
+# plotting
+plot(clp, emotion_g,
+     edge.arrow.size = 0.125)
+
+# coloring nodes by community (avoiding use of cluster color easier visualization)
+V(emotion_g)$community <- clp$membership
+colrs <- adjustcolor(c("red", "cyan", "green", "purple"))
+plot(emotion_g, 
+     vertex.color = colrs[V(emotion_g)$community],
+     edge.arrow.size = 0.125)
+```
+Four clusters appear:
+
+1. Disdain, Offense, Fear, Disgust, Anxiety, Sadness, Anger, Guilt, and Embarrassment
+2. Pride, Love, and Hope
+3. Satisfaction, Joy, and Gratitude
+4. Alertness, Amusement, and Awe
+
+Cluster one appears to have predominately negative emotions, whereas the other three clusters could be described as positive emotions.
+
+
+# Picking a Centrality Measure
+```{r}
+# plotting the graph object
+plot(emotion_g,
+     edge.arrow.size = 0.125)
+
+igraph::degree(emotion_g)
+# alertness, amusement, anger, anxiety, disgust, hope, joy, love, sadness, and satisfaction all have the highest degree centrality at 36
+
+igraph::eigen_centrality(emotion_g)$vector
+# Joy stands out among the rest at a value of 1. Satisfaction comes in second at a value of 0.77667.
+# Interestingly enough, disdain is very low at a value of 0.01051.
+
+igraph::closeness(emotion_g)
+# pride has the highest closeness centrality at 0.008264
+# anxiety has the lowest closeness centrality at 0.002227
+
+igraph::betweenness(emotion_g)
+# disdain has the highest betweenness by far at 178
+```
+I'm deciding to use betweenness as the centrality measure to determine which emotion is most central. Betweenness centrality essentially tells us how involved a node is within another node's path. If a node has a high betweenness centrality, then it means lots of nodes must pass through it in order to reach another node, which is a good measure of how important a node is to a network. I tried looking at degree and closeness centrality; however, a lot of the emotions were relatively close to one another, whereas with betweenness, the emotion valued the highest was disdain at 178, whereas the next closest emotion was embarrassment at a value of 76. In this case, it means that disdain is the most central emotion. The least central motion based off of the betweenness centrality consisted of alertness, anger, anxiety, disgust, hope, joy, love, sadness, and satisfaction at a value of 0.
+
+
+# Comparing Centrality Measures
+```{r}
+# let's start by scaling node size with my measure of choice, betweenness
+plot(emotion_g, 
+     vertex.color = colrs[V(emotion_g)$community],
+     vertex.size = igraph::betweenness(emotion_g)/10,
+     edge.arrow.size = 0.125,
+     main = "Betweenness Centrality")
+
+# scaling by degree centrality
+plot(emotion_g, 
+     vertex.color = colrs[V(emotion_g)$community],
+     vertex.size = igraph::degree(emotion_g)/2,
+     edge.arrow.size = 0.125,
+     main = "Degree Centrality")
+
+# scaling by closeness centrality
+plot(emotion_g, 
+     vertex.color = colrs[V(emotion_g)$community],
+     vertex.size = igraph::closeness(emotion_g)*2000,
+     edge.arrow.size = 0.125,
+     main = "Closeness Centrality")
+
+# scaling by eigenvector centrality
+plot(emotion_g, 
+     vertex.color = colrs[V(emotion_g)$community],
+     vertex.size = igraph::eigen_centrality(emotion_g)$vector*25,
+     edge.arrow.size = 0.125,
+     main = "Eigenvector Centrality")
+```
+As expressed before, disdain stands out among the rest when scaling nodal size by betweenness centrality.
+
+Difficult to make meaningful inferences from the degree centrality as they are all very similar to one another.
+
+Pride, embarrassment, and disdain stand out as the important nodes when looking at closeness centrality.
+
+The Eigenvector centrality interested me, as I would've expected disdain to be relatively high due to its high betweenness centrality. However, it has one of the lowest Eigenvector centralities, whereas joy has the highest (1). Eigenvector centrality tells us how much of an influence a node has over a network based on how many other nodes it is connected to that are also scored highly regarding Eigenvector centrality. Interestingly enough, Joy has a betweenness centrality of 0, so I'm assuming that it isn't essential for other nodes to pass through it, but it happens to be connected to a lot of important nodes. For this reason, I'll stand by my claim that betweenness centrality is the better measure to evaluate in this situation, and that disdain is the most central emotion.
+
+
