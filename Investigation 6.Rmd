@@ -1,0 +1,224 @@
+---
+title: "Investigation_6"
+author: "John Viviani"
+date: "7/1/2020"
+output: 
+  md_document:
+    variant: gfm
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+{
+  c("conflicted",    # To deal with conflicting function names.
+                     # I've had some strangeness with this
+                     #  script. I suspect package:conflicted,
+                     #  but I don't yet know for sure.
+    "data.table",    # Fast data input/output
+    "dplyr",         # This is all of tidyverse that gets used here
+    "drat",          # Needed for a possible install below 
+    "dtplyr",        # dplyr syntax with a data.table backend
+    "igraph",        # Basic network tools; we'll use statnet mostly
+    "igraphdata",    # Some useful datasets
+    "intergraph",    # Translate between igraph and statnet formats
+    "statnet",        # A suite of network tools, including ERGM and more
+    "tidyverse",
+    "vegan",
+    "rtweet"
+  ) -> package_names
+  
+  for (package_name in package_names) {
+    if (!is.element(package_name, installed.packages()[, 1])) {
+      install.packages(package_name,
+                       repos = "http://cran.mtu.edu/")
+    }
+    library(
+      package_name,
+      character.only = TRUE,
+      quietly = TRUE,
+      verbose = FALSE
+    )
+  }
+  rm(list = c("package_name", "package_names"))
+  
+  # Load one package via drat, if needed
+  if (!is.element("networkdata", installed.packages()[, 1])) {
+    addRepo("schochastics")
+    install.packages("networkdata")
+  }
+  library(
+    "networkdata",
+    character.only = TRUE,
+    quietly = TRUE,
+    verbose = FALSE
+  )
+}
+
+# Because I like these options:
+options(show.signif.stars = FALSE)
+options(digits = 4)
+
+conflict_prefer("filter", "dplyr")
+```
+
+
+# Twitter API Info
+```{r}
+consumer_key <- readRDS("~/COLLEGE/GRAD SCHOOL/consumer_key")
+consumer_secret <- readRDS("~/COLLEGE/GRAD SCHOOL/consumer_secret")
+access_token <- readRDS("~/COLLEGE/GRAD SCHOOL/access_token")
+access_secret <- readRDS("~/COLLEGE/GRAD SCHOOL/access_secret")
+
+token <- create_token(app = "John V's Twitter App",
+                      consumer_key = consumer_key,
+                      consumer_secret = consumer_secret)
+```
+
+
+# Getting Followers and Friends
+```{r}
+followers <- get_followers("Tesla")
+tesla_friends <- get_friends("tesla")
+```
+
+
+# Sampling the Followers
+```{r}
+# sampling 50 accounts
+ids <- sample.int(followers$user_id, 50, useHash = FALSE)
+```
+
+
+# Getting Edge Data
+```{r}
+# create empty list to store results
+friends <- list()
+
+# start loop
+for (a in 1:length(ids)){
+  friends[[a]] <- get_friends(ids[a])
+  
+  # pause if divisible by 15
+  if (a %% 15 == 0){
+    Sys.sleep(15*60) # must enter time in seconds
+  }
+}
+
+# Combine data tables in list
+friends <- bind_rows(friends) %>% 
+  rename(friend = user_id)
+```
+This will give us the edge data we need to make a graph. We're trying to see if any of the followers we sampled from Tesla's Twitter account are following each other.
+
+
+# Networking
+```{r}
+dplyr::filter(friends, followers %in% friend)
+
+net <- friends %>% 
+  group_by(friend) %>% 
+  mutate(count = n()) %>% 
+  ungroup() %>% 
+  filter(count > 1)
+
+g <- graph_from_data_frame(net)
+```
+
+
+# Plotting the Networks
+```{r}
+plot(g,
+     edge.arrow.size = 0.35,
+     vertex.label.cex = 0.75,
+     vertex.size = igraph::degree(g)*10,
+     main = "Scaled by Degree Centrality")
+
+lookup_users(274627449)
+```
+Some are following each other, although I'm unsure that they would be important from a marketing perspective (largely random Twitter users).
+I suppose you could argue that since Tesla is an electric vehicle and clean energy company that they would want to reach out to as many Americans as possible. Ideally, they'll appeal to middle-class Americans as they make up the most of America, and would likely be able to afford Tesla's products.
+
+
+# Following Versus Followers
+```{r}
+tesla_friends %>% 
+  select(user_id) %>% 
+  mutate(follow = TRUE) %>% 
+  full_join(followers %>% mutate(follows_tesla = TRUE),
+            by = "user_id") %>% 
+  mutate_all(funs(replace(., which(is.na(.)), FALSE))) %>% 
+  select(2:3) %>% table
+```
+From the 5000 followers I was able to pull (API limits), Tesla isn't following any of them back. Not shocking, considering 5.7 million people are following Tesla.
+
+Let's try looking into any relationships between Tesla, as well as SpaceX (also owned by Elon Musk), and Elon Musk's own Twitter account.
+
+# Network Analysis of Three Accounts
+```{r}
+three_friends <- get_friends(c("Tesla", "SpaceX", "elonmusk"))
+
+tbl <- table(three_friends$user_id)
+
+# subset three_friends to only those followed by 3 or more
+three_friends_3 <- subset(three_friends, user_id %in% names(tbl[tbl > 2L]))
+
+mat <- as.matrix(three_friends_3)
+
+mat <- igraph::graph_from_edgelist(mat)
+
+plot(mat,
+     edge.arrow.size = 0.35)
+
+# let's identify the other 5 users in this network
+user_list <- c("859816394556284929", "1282121312", "19725644", "1308211178", "1654188770")
+
+users_three_friends <- lookup_users(user_list)
+```
+The five users from the user_list created above were boringcompany, waitbutwhy, neiltyson, Teslarati, and Hyperloop respectively. 
+
+It's not surprising to see The Boring Company (boringcompany) in here since this is another company owned by Elon Musk.
+
+waitbutwhy is the Twitter account for the Wait But Why website founded by Tim Urban and Andrew Finn.
+
+neiltyson is a Twitter account owned by Neil deGrasse Tyson, who I would imagine has a good relationship with Elon Musk, thus associating him with Musk's two other business' Twitter accounts (Tesla and SpaceX).
+
+Teslarati's Twitter account is a multi-platform media company that focuses on ventures affiliated with Elon Musk.
+
+Hyperloop is the official Twitter account for the SpaceX Hyperloop Pod Competition.
+
+So, looking at these five accounts, it's evident that they're mostly associated with Elon Musk's business ventures (Neil deGrasse Tyson being the one exception). Let's add some of these accounts to see if we can get any interesting insights.
+
+
+
+# Network Analysis of More Accounts
+```{r}
+more_friends <- get_friends(c("Tesla", "SpaceX", "elonmusk", "boringcompany", "waitbutwhy", "teslarati", "hyperloop"))
+
+tbl2 <- table(more_friends$user_id)
+
+# subset three_friends to only those followed by 3 or more
+more_friends_3 <- subset(more_friends, user_id %in% names(tbl2[tbl2 > 2L]))
+
+mat2 <- as.matrix(more_friends_3)
+
+mat2 <- igraph::graph_from_edgelist(mat2)
+
+plot(mat2,
+     edge.arrow.size = 0.35,
+     vertex.size = igraph::degree(mat2),
+     main = "Scaled by Degree Centrality")
+
+# let's identify these 3 users in this network
+user_list2 <- c("11348282", "692023", "4398626122")
+
+users_more_friends <- lookup_users(user_list2)
+```
+Now we see NASA, westcoastbill, and OpenAI
+
+OpenAI is an artificial intelligence research laboratory. Elon Musk pledged money to this venture
+
+westcoastbill is a Twitter account owned by Bill Lee, who is a general partner of Craft Ventures (a venture capital firm).
+
+Unsurpisingly, elonmusk, Tesla, SpaceX, and teslarati are the largest nodes when scaled by degree centrality, as these are all accounts that are associated with Elon Musk and his companies. waitbutwhy is another account that has influence in the network, but isn't exclusively associated with Elon Musk. It's actually a blogging website that features a variety of topics (Elon Musk being one of them). Perhaps from a marketing perspective, it would be important for Musk to form some sort of association with them as they share similar influence in this network, and would allow more exposure to the important players that waitbutwhy may associate with in a network of their own.
+
